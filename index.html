@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>三诚螺纹护套库存大屏看板</title>
+  <link rel="stylesheet" href="assets/style.css"/>
+  <script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <!-- 头部 -->
+    <header>
+      <h1><i data-lucide="package"></i> 三诚螺纹护套实时库存看板</h1>
+      <div class="update-time" id="updateTime">加载中...</div>
+    </header>
+
+    <!-- 导航tab -->
+    <div class="tabs">
+      <button class="tab active" data-tab="overview">总览大屏</button>
+      <button class="tab" data-tab="ranking">库存排行榜</button>
+      <button class="tab" data-tab="detail">型号明细查询</button>
+    </div>
+
+    <!-- 总览大屏 -->
+    <div id="overview" class="panel active">
+      <div class="grid">
+        <div class="card total">
+          <div class="num" id="totalItems">0</div>
+          <div class="label">总SKU数</div>
+        </div>
+        <div class="card total">
+          <div class="num" id="totalStock">0</div>
+          <div class="label">总库存件数</div>
+        </div>
+        <div class="card total">
+          <div class="num" id="totalTypes">0</div>
+          <div class="label">总型号分类</div>
+        </div>
+        <div class="card total">
+          <div class="num" id="activeTypes">0</div>
+          <div class="label">有库存分类</div>
+        </div>
+      </div>
+
+      <div class="charts">
+        <div class="chart-box">
+          <h3>各类别库存占比</h3>
+          <div id="pieChart" style="height:400px;"></div>
+        </div>
+        <div class="chart-box">
+          <h3>库存Top15型号</h3>
+          <div id="barChart" style="height:400px;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 排行榜 -->
+    <div id="ranking" class="panel">
+      <div class="search-bar">
+        <input type="text" id="searchInput" placeholder="搜索规格/材质/类别..."/>
+      </div>
+      <div id="rankingList" class="ranking-list"></div>
+    </div>
+
+    <!-- 明细查询 -->
+    <div id="detail" class="panel">
+      <select id="sheetSelect"></select>
+      <div class="search-bar">
+        <input type="text" id="detailSearch" placeholder="搜索当前页规格..."/>
+      </div>
+      <table id="detailTable">
+        <thead>
+          <tr>
+            <th>序号</th>
+            <th>类别</th>
+            <th>规格</th>
+            <th>材质</th>
+            <th>现库存</th>
+            <th>单位</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    const XLSX_URL = "data/螺纹护套库存明细 202512(1).xlsx?" + Date.now();
+    let workbook = null;
+    let allData = {};
+
+    // 加载Excel
+    async function loadData() {
+      const resp = await fetch(XLSX_URL);
+      const data = await resp.arrayBuffer();
+      workbook = XLSX.read(data, { type: "array" });
+      
+      const totalSheet = workbook.Sheets["总汇"];
+      const totalData = XLSX.utils.sheet_to_json(totalSheet, { header: 1 });
+      
+      document.getElementById("updateTime").textContent = 
+        "数据更新时间: " + new Date().toLocaleString();
+
+      parseAllSheets();
+      renderOverview();
+      renderSheetSelect();
+    }
+
+    function parseAllSheets() {
+      allData = {};
+      let totalStock = 0;
+      let totalItems = 0;
+      let activeTypes = 0;
+      const categoryMap = {};
+
+      workbook.SheetNames.forEach(name => {
+        if (name === "总汇" || name.startsWith("空白")) return;
+        
+        const sheet = workbook.Sheets[name];
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+        const items = [];
+
+        for (let i = 4; i < rows.length; i += 2) {
+          const row1 = rows[i] || [];
+          const row2 = rows[i+1] || [];
+          const stock = parseInt(row1[6] || row1[5] || 0) || 0;
+          if (stock === 0 && !row1[2]) continue;
+
+          const item = {
+            seq: row1[0] || "",
+            type: row1[1] || name,
+            spec: row1[2] || "",
+            material: row1[3] || "",
+            stock: stock,
+            unit: row1[5] || "pcs"
+          };
+          if (item.stock > 0) {
+            items.push(item);
+            totalStock += item.stock;
+            totalItems++;
+            categoryMap[item.type] = (categoryMap[item.type] || 0) + item.stock;
+            if (!categoryMap[item.type + "_count"]) activeTypes++;
+            categoryMap[item.type + "_count"] = true;
+          }
+        }
+        allData[name] = items;
+      });
+
+      // 更新总览卡片
+      document.getElementById("totalItems").textContent = totalItems.toLocaleString();
+      document.getElementById("totalStock").textContent = totalStock.toLocaleString();
+      document.getElementById("totalTypes").textContent = Object.keys(categoryMap).length / 2;
+      document.getElementById("activeTypes").textContent = activeTypes;
+
+      // 绘制图表
+      renderPieChart(Object.fromEntries(
+        Object.entries(categoryMap).filter(([k]) => !k.endsWith("_count"))
+      ));
+      renderBarChart();
+      renderRanking();
+    }
+
+    function renderPieChart(data) {
+      const chart = echarts.init(document.getElementById("pieChart"));
+      const option = {
+        backgroundColor: "transparent",
+        tooltip: { trigger: "item" },
+        legend: { orient: "vertical", right: 10, top: "center", textStyle: { color: "#fff" } },
+        series: [{
+          type: "pie",
+          radius: ["30%", "70%"],
+          center: ["40%", "50%"],
+          label: { color: "#fff" },
+          data: Object.entries(data).map(([name, value]) => ({
+            name: name.replace("型", "").replace(" ", ""),
+            value
+          }))
+        }]
+      };
+      chart.setOption(option);
+    }
+
+    function renderBarChart() {
+      const allItems = [];
+      Object.values(allData).flat().forEach(arr => allItems.push(...arr));
+      allItems.sort((a,b) => b.stock - a.stock);
+      const top15 = allItems.slice(0, 15);
+
+      const chart = echarts.init(document.getElementById("barChart"));
+      chart.setOption({
+        tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
+        grid: { left: 60, right: 20, top: 40, bottom: 60 },
+        xAxis: { type: "value", axisLabel: { color: "#ccc" } },
+        yAxis: { type: "category", data: top15.map(i => i.spec.substring(0, 20) + "..."), axisLabel: { color: "#fff" } },
+        series: [{ 
+          type: "bar", 
+          data: top15.map(i => ({ value: i.stock, itemStyle: { color: "#00d4ff" } })),
+          label: { show: true, position: "right", color: "#fff" }
+        }]
+      });
+    }
+
+    function renderRanking() {
+      const all = [];
+      Object.values(allData).flat().forEach(arr => all.push(...arr));
+      all.sort((a,b) => b.stock - a.stock);
+      
+      const html = all.slice(0, 100).map((item, idx) => `
+        <div class="rank-item ${idx < 3 ? "top3" : ""}">
+          <span class="rank-num">${idx + 1}</span>
+          <span class="spec">${item.spec}</span>
+          <span class="type">${item.type}</span>
+          <span class="stock">${item.stock.toLocaleString()}</span>
+        </div>
+      `).join("");
+      document.getElementById("rankingList").innerHTML = html;
+    }
+
+    function renderSheetSelect() {
+      const select = document.getElementById("sheetSelect");
+      select.innerHTML = workbook.SheetNames
+        .filter(n => !n.startsWith("空白") && n !== "总汇")
+        .map(n => `<option value="${n}">${n}</option>`)
+        .join("");
+      select.onchange = () => renderDetailTable(select.value);
+      renderDetailTable(select.value);
+    }
+
+    function renderDetailTable(sheetName) {
+      const data = allData[sheetName] || [];
+      const tbody = document.querySelector("#detailTable tbody");
+      tbody.innerHTML = data.map(item => `
+        <tr>
+          <td>${item.seq}</td>
+          <td>${item.type}</td>
+          <td>${item.spec}</td>
+          <td>${item.material}</td>
+          <td class="stock">${item.stock.toLocaleString()}</td>
+          <td>${item.unit}</td>
+        </tr>
+      `).join("");
+    }
+
+    // Tab切换
+    document.querySelectorAll(".tab").forEach(tab => {
+      tab.onclick = () => {
+        document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+        document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+        tab.classList.add("active");
+        document.getElementById(tab.dataset.tab).classList.add("active");
+      };
+    });
+
+    // 搜索
+    document.getElementById("searchInput").oninput = (e) => {
+      const kw = e.target.value.toLowerCase();
+      const all = [];
+      Object.values(allData).flat().forEach(arr => all.push(...arr));
+      const filtered = all.filter(i => 
+        i.spec.toLowerCase().includes(kw) || 
+        i.type.includes(kw) || 
+        i.material.toLowerCase().includes(kw)
+      );
+      // 重新渲染排行榜
+      const html = filtered.slice(0, 100).map((item, idx) => `
+        <div class="rank-item ${idx < 3 ? "top3" : ""}">
+          <span class="rank-num">${idx + 1}</span>
+          <span class="spec">${item.spec}</span>
+          <span class="type">${item.type}</span>
+          <span class="stock">${item.stock.toLocaleString()}</span>
+        </div>
+      `).join("");
+      document.getElementById("rankingList").innerHTML = html;
+    };
+
+    document.getElementById("detailSearch").oninput = (e) => {
+      const kw = e.target.value;
+      const sheetName = document.getElementById("sheetSelect").value;
+      const data = (allData[sheetName] || []).filter(i => i.spec.includes(kw));
+      const tbody = document.querySelector("#detailTable tbody");
+      tbody.innerHTML = data.map(item => `
+        <tr>
+          <td>${item.seq}</td>
+          <td>${item.type}</td>
+          <td>${item.spec}</td>
+          <td>${item.material}</td>
+          <td class="stock">${item.stock.toLocaleString()}</td>
+          <td>${item.unit}</td>
+        </tr>
+      `).join("");
+    };
+
+    // 初始化
+    lucide.createIcons();
+    loadData();
+  </script>
+</body>
+</html>
