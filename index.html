@@ -32,7 +32,7 @@
       </div>
       <div class="charts">
         <div class="chart-box"><h3>各型号库存占比</h3><div id="pieChart" style="height:400px;"></div></div>
-        <div class="chart-box"><h3>库存Top15规格</h3><div id="barChart" style="height:400px;"></div></div>
+        <div class="chart-box"><h3>库存Top15规格</h3><div id="barChart" style="height:500px;"></div></div> <!-- 增加高度 -->
       </div>
     </div>
 
@@ -98,9 +98,11 @@
           if (!row[2]) continue;
 
           const stock = parseInt(row[6]) || parseInt(row[7]) || parseInt(row[5]) || 0;
+          // 修复：强制确保 type 有值（优先 row[1]，否则 sheetName）
+          const type = (row[1] && row[1].toString().trim()) || name.trim();
           const item = {
             seq: row[0] || '',
-            type: (row[1] || name).trim(),   // 关键：型号 = 类别 或 sheet名
+            type: type,
             spec: (row[2] || '').toString().trim(),
             material: (row[3] || '').toString().trim(),
             stock: stock,
@@ -110,8 +112,8 @@
           if (stock > 0) {
             totalStock += stock;
             totalItems++;
-            typeMap[item.type] = (typeMap[item.type] || 0) + stock;
-            if (!typeMap[item.type + "_f"]) { activeTypes++; typeMap[item.type + "_f"] = true; }
+            typeMap[type] = (typeMap[type] || 0) + stock;
+            if (!typeMap[type + "_f"]) { activeTypes++; typeMap[type + "_f"] = true; }
           }
         }
         if (items.length) allData[name] = items;
@@ -137,26 +139,39 @@
       });
     }
 
-    // 修复1：Top15柱状图清晰显示 型号 + 规格（换行）
+    // 修复1：Top15柱状图 - 增加高度 + 旋转标签 + 优化grid，避免重叠
     function renderBarChart() {
       const top15 = Object.values(allData).flat()
         .filter(i => i.stock > 0)
         .sort((a,b) => b.stock - a.stock)
         .slice(0, 15);
 
-      const labels = top15.map(i => `${i.type}\n${i.spec.length > 20 ? i.spec.slice(0,20)+'...' : i.spec}`);
+      const labels = top15.map(i => `${i.type} / ${i.spec.substring(0, 15)}${i.spec.length > 15 ? '...' : ''}`);
 
       echarts.init(document.getElementById("barChart")).setOption({
-        tooltip: { trigger: 'axis', formatter: p => `${p[0].name.replace('\\n','<br>')}<br>库存: ${p[0].value.toLocaleString()}` },
-        grid: { left: 100, right: 60, top: 60, bottom: 80 },
+        tooltip: { 
+          trigger: 'axis', 
+          formatter: params => {
+            const item = top15[params[0].dataIndex];
+            return `${item.type}<br/>${item.spec}<br/>库存: ${params[0].value.toLocaleString()}`;
+          }
+        },
+        grid: { left: 120, right: 60, top: 60, bottom: 100 }, // 增加 bottom 空间
         xAxis: { type: 'value', axisLabel: { color: '#ccc' } },
         yAxis: { 
           type: 'category', 
           data: labels,
           axisLabel: { 
             color: '#fff', 
-            fontSize: 12,
-            formatter: v => v.replace('\\n', '\n')
+            fontSize: 11,
+            rotate: 0, // 0度，但用多行
+            formatter: function(value) {
+              // 手动换行：型号 / 规格
+              return value.replace('/ ', '\n');
+            },
+            rich: {
+              a: { height: 20 } // 控制行高
+            }
           }
         },
         series: [{
@@ -167,7 +182,7 @@
       });
     }
 
-    // 修复2：排行榜强制显示型号（类别）
+    // 修复2：排行榜 - 强制显示型号 + 优化grid列宽
     function renderRanking(items = null) {
       let list = items || Object.values(allData).flat();
       list = list.filter(i => i.stock > 0).sort((a,b) => b.stock - a.stock);
@@ -175,7 +190,7 @@
       const html = list.slice(0, 200).map((item, i) => `
         <div class="rank-item ${i < 3 ? 'top3' : ''} ${item.stock < 1000 ? 'low-stock' : ''}">
           <div class="rank-num">${i + 1}</div>
-          <div class="type">${item.type}</div>
+          <div class="type">${item.type}</div> <!-- 强制显示型号 -->
           <div class="spec">${item.spec}</div>
           <div class="material">${item.material || '-'}</div>
           <div class="stock">${item.stock.toLocaleString()}${item.stock < 1000 ? ' 低库存' : ''}</div>
