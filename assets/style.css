@@ -54,3 +54,36 @@ select { padding: 12px 20px; background: #16213e; color: #fff; border: none; bor
 .panel.active { display: block; }
 
 @media (max-width: 1200px) { .charts { grid-template-columns: 1fr; } }
+/* 彻底解决前三名文字看不见的问题 */
+.rank-item.top3 {
+  background: linear-gradient(90deg, #00d4ff, #00aacc) !important;
+  color: #000 !important;
+  font-weight: bold;
+}
+
+/* 强制前三名所有文字都是黑色 + 加粗 + 白色描边 */
+.rank-item.top3 span {
+  color: #000 !important;
+  font-weight: bold !important;
+  -webkit-text-stroke: 1.2px #ffffff;     /* 白色外描边 */
+  text-stroke: 1.2px #ffffff;
+  text-shadow: 
+    -1px -1px 0 #fff,
+     1px -1px 0 #fff,
+    -1px  1px 0 #fff,
+     1px  1px 0 #fff,
+     0    0    4px #fff;
+}
+
+/* 确保库存数字也清晰 */
+.rank-item.top3 .stock {
+  color: #000 !important;
+  font-size: 1.4em !important;
+  font-weight: bold !important;
+}
+
+/* 普通排名保持原风格 */
+.rank-item:not(.top3) .type { color: #00d4ff; }
+.rank-item:not(.top3) .spec { color: #fff; }
+.rank-item:not(.top3) .material { color: #aaa; }
+.rank-item:not(.top3) .stock { color: #00ff9d; }
