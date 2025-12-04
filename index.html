@@ -39,7 +39,7 @@
     <!-- 库存排行榜 -->
     <div id="ranking" class="panel">
       <div class="search-bar">
-        <input type="text" id="searchInput" placeholder="搜索型号或规格（如：302、M5、1215黄铜）">
+        <input type="text" id="searchInput" placeholder="搜索型号或规格（如：302、M5、1215黄铜、308长）">
         <button id="exportBtn">导出CSV</button>
       </div>
       <div id="rankingList" class="ranking-list"></div>
@@ -49,10 +49,10 @@
     <div id="detail" class="panel">
       <div style="margin-bottom:15px;">
         <select id="sheetSelect" style="padding:10px 15px;font-size:16px;border-radius:8px;background:#16213e;color:#fff;border:none;"></select>
-        <span style="margin-left:20px;color:#aaa;font-size:14px;">共 <span id="itemCount">0</span> 条规格</span>
+        <span style="margin-left:20px;color:#aaa;">共 <span id="itemCount">0</span> 条规格</span>
       </div>
       <div class="search-bar">
-        <input type="text" id="detailSearch" placeholder="输入规格模糊搜索（如：M5、L6、M8*1.25）">
+        <input type="text" id="detailSearch" placeholder="模糊搜索规格（如：M6、L10、1.5D）">
         <button id="detailExportBtn">导出当前型号</button>
       </div>
       <table id="detailTable">
@@ -89,7 +89,7 @@
           }
         } catch(e) {}
       }
-      document.body.innerHTML = "<h1 style='color:#f66;text-align:center;margin-top:100px'>未找到 data.xlsx 文件！请确保文件在仓库根目录并命名为 data.xlsx</h1>";
+      document.body.innerHTML = "<h1 style='color:#f66;text-align:center;margin-top:100px'>未找到 data.xlsx！请确保文件在根目录</h1>";
     }
 
     function parseAllSheets() {
@@ -111,13 +111,14 @@
           const stock = parseInt(row[6]) || parseInt(row[7]) || parseInt(row[5]) || 0;
           const item = {
             seq: row[0] || '',
-            type: row[1] || sheetName,  // 型号 = 类别 或 sheet名
+            type: (row[1] || sheetName).trim(),  // 型号 = 类别 或 sheet名
             spec: (row[2] || '').toString().trim(),
             material: (row[3] || '').toString().trim(),
             stock: stock,
             unit: row[5] || 'pcs'
           };
           items.push(item);
+
           if (stock > 0) {
             totalStock += stock;
             totalItems++;
@@ -166,12 +167,12 @@
         .slice(0, 15);
 
       const labels = allItems.map(i => 
-        i.type.replace(/型.*$/, '') + "\n" + i.spec.slice(0, 25)
+        i.type + "\n" + (i.spec.length > 18 ? i.spec.substring(0,18)+"..." : i.spec)
       );
 
       echarts.init(document.getElementById("barChart")).setOption({
-        tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-        grid: { left: 80, right: 40, top: 40, bottom: 80 },
+        tooltip: { trigger: 'axis' },
+        grid: { left: 90, right: 50, top: 50, bottom: 80 },
         xAxis: { type: 'value', axisLabel: { color: '#ccc' } },
         yAxis: { 
           type: 'category', 
@@ -179,107 +180,99 @@
           axisLabel: { 
             color: '#fff',
             fontSize: 11,
-            formatter: function(value) {
-              return value.replace('\\n', '\n');
-            }
+            formatter: function(v) { return v.replace('\\n', '\n'); }
           }
         },
         series: [{
           type: 'bar',
           data: allItems.map(i => ({
             value: i.stock,
-            itemStyle: { color: i.stock < 500 ? '#ff4444' : '#00d4ff' }
+            itemStyle: { color: i.stock < 1000 ? '#ff4444' : '#00d4ff' }
           })),
           label: { show: true, position: 'right', color: '#fff' }
         }]
       });
     }
 
+    // 重点修复：排行榜显示 型号 + 规格 + 材质 + 库存
     function renderRanking(filterItems = null) {
       let items = filterItems || Object.values(allData).flat();
       items = items.filter(i => i.stock > 0).sort((a,b) => b.stock - a.stock);
 
       const html = items.slice(0, 200).map((item, idx) => {
-        const low = item.stock < 500 ? 'low-stock' : '';
+        const low = item.stock < 1000 ? 'low-stock' : '';
         return `
           <div class="rank-item ${idx < 3 ? 'top3' : ''} ${low}">
             <span class="rank-num">${idx + 1}</span>
             <span class="type">${item.type}</span>
             <span class="spec">${item.spec}</span>
-            <span class="material">${item.material}</span>
-            <span class="stock">${item.stock.toLocaleString()}${item.stock < 500 ? ' 低库存' : ''}</span>
+            <span class="material">${item.material || '-'}</span>
+            <span class="stock">${item.stock.toLocaleString()}${item.stock < 1000 ? ' 低库存' : ''}</span>
           </div>`;
       }).join('');
-      document.getElementById("rankingList").innerHTML = html;
+      document.getElementById("rankingList").innerHTML = html || '<div style="text-align:center;color:#aaa;padding:50px;">暂无数据</div>';
     }
 
     function renderTypeSelect() {
       const select = document.getElementById("sheetSelect");
       const types = Object.keys(allData).sort();
       select.innerHTML = types.map(t => `<option value="${t}">${t}（${allData[t].length}规格）</option>`).join('');
-      renderDetailTable(types[0]);
+      renderDetailTable(types[0] || '');
       select.onchange = () => renderDetailTable(select.value);
     }
 
-    function renderDetailTable(typeName, searchKw = '') {
+    function renderDetailTable(typeName, kw = '') {
       const items = allData[typeName] || [];
-      const filtered = searchKw 
-        ? items.filter(i => i.spec.toLowerCase().includes(searchKw.toLowerCase()))
-        : items;
-
+      const filtered = kw ? items.filter(i => i.spec.toLowerCase().includes(kw.toLowerCase())) : items;
       document.getElementById("itemCount").textContent = filtered.length;
 
       const tbody = document.querySelector("#detailTable tbody");
       tbody.innerHTML = filtered.map(item => {
-        const low = item.stock < 500 && item.stock > 0 ? 'low-stock' : '';
+        const low = item.stock < 1000 && item.stock > 0 ? 'low-stock' : '';
         return `
           <tr class="${low}">
             <td>${item.seq}</td>
             <td>${item.type}</td>
             <td>${item.spec}</td>
-            <td>${item.material}</td>
-            <td class="stock">${item.stock.toLocaleString()}${item.stock < 500 ? ' 低库存' : ''}</td>
+            <td>${item.material || '-'}</td>
+            <td class="stock">${item.stock.toLocaleString()}${item.stock < 1000 ? ' 低库存' : ''}</td>
             <td>${item.unit}</td>
           </tr>`;
       }).join('');
     }
 
-    // 全局搜索（排行榜）
+    // 全局搜索
     document.getElementById("searchInput").oninput = e => {
       const kw = e.target.value.trim();
       if (!kw) return renderRanking();
-      const filtered = Object.values(allData).flat().filter(i => 
-        i.type.includes(kw) || 
+      const filtered = Object.values(allData).flat().filter(i =>
+        i.type.includes(kw) ||
         i.spec.toLowerCase().includes(kw.toLowerCase()) ||
-        i.material.includes(kw)
+        (i.material && i.material.includes(kw))
       );
       renderRanking(filtered);
     };
 
     // 明细页搜索
     document.getElementById("detailSearch").oninput = e => {
-      const kw = e.target.value.trim();
-      const type = document.getElementById("sheetSelect").value;
-      renderDetailTable(type, kw);
+      renderDetailTable(document.getElementById("sheetSelect").value, e.target.value.trim());
     };
 
     // 导出
     document.getElementById("exportBtn").onclick = () => exportCSV(Object.values(allData).flat().filter(i => i.stock > 0), "全厂库存排行榜.csv");
     document.getElementById("detailExportBtn").onclick = () => {
       const type = document.getElementById("sheetSelect").value;
-      exportCSV(allData[type] || [], `${type}.csv`);
+      exportCSV(allData[type] || [], `${type}_库存明细.csv`);
     };
 
     function exportCSV(items, filename) {
       const headers = "排名,型号,规格,材质,现库存,单位\n";
-      const rows = items.map((item, idx) => 
-        `${idx+1},${item.type},${item.spec},${item.material},${item.stock},${item.unit}`
-      ).join("\n");
-      const blob = new Blob(["\uFEFF" + headers + rows], { type: "text/csv;charset=utf-8;" });
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
-      link.download = filename;
-      link.click();
+      const rows = items.map((item, i) => `${i+1},${item.type},${item.spec},${item.material || '-'},${item.stock},${item.unit}`);
+      const blob = new Blob(["\uFEFF" + headers + rows.join("\n")], { type: "text/csv;charset=utf-8;" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      a.click();
     }
 
     // Tab切换
