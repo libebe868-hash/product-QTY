@@ -37,7 +37,7 @@
 
     <div id="ranking" class="panel">
       <div class="search-bar">
-        <input type="text" id="searchInput" placeholder="搜索型号或规格（如：302、M6、1215黄铜）">
+        <input type="text" id="searchInput" placeholder="全局搜索：型号 / 规格 / 材质（如：302、M6、1215黄铜）">
         <button id="exportBtn">导出CSV</button>
       </div>
       <div id="rankingList" class="ranking-list"></div>
@@ -46,10 +46,10 @@
     <div id="detail" class="panel">
       <div style="margin-bottom:15px;">
         <select id="sheetSelect"></select>
-        <span style="margin-left:20px;color:#aaa;">共 <span id="itemCount">0</span> 条规格</span>
+        <span style="margin-left:20px;color:#aaa;">共 <span id="itemCount">0</span> 条规格（智能过滤中）</span>
       </div>
       <div class="search-bar">
-        <input type="text" id="detailSearch" placeholder="模糊搜索规格（如：M8、L10、1.5D）">
+        <input type="text" id="detailSearch" placeholder="智能搜索：M3 → M3*0.5 → M3*0.5-L6 → 完整规格（逐步精准）">
         <button id="detailExportBtn">导出当前型号</button>
       </div>
       <table id="detailTable">
@@ -62,6 +62,7 @@
   <script>
     let workbook = null;
     let allData = {};
+    let currentSheetData = [];  // 当前选中的型号全部数据（用于智能搜索）
 
     async function loadExcel() {
       const urls = ["data.xlsx", "螺纹护套库存明细 202512(1).xlsx"];
@@ -76,7 +77,7 @@
           }
         } catch(e) {}
       }
-      alert("未找到 data.xlsx 文件！请确保文件在仓库根目录");
+      alert("未找到 data.xlsx 文件！");
     }
 
     function parseAllSheets() {
@@ -148,13 +149,9 @@
         tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
         grid: { left: 60, right: 20, top: 40, bottom: 60 },
         xAxis: { type: 'value', axisLabel: { color: '#ccc' } },
-        yAxis: { 
-          type: 'category', 
-          data: labels,
-          axisLabel: { color: '#fff' }
-        },
+        yAxis: { type: 'category', data: labels, axisLabel: { color: '#fff' } },
         series: [{
-          type: 'bar', 
+          type: 'bar',
           data: top15.map(i => ({ value: i.stock, itemStyle: { color: i.stock < 1000 ? '#ff4444' : '#00d4ff' } })),
           label: { show: true, position: 'right', color: '#fff' }
         }]
@@ -183,88 +180,89 @@
     function renderTypeSelect() {
       const select = document.getElementById("sheetSelect");
       const names = Object.keys(allData).sort();
-      select.innerHTML = names.map(n => `<option value="${n}">${n}</option>`).join('');
-      select.onchange = () => renderDetailTable(select.value);
-      renderDetailTable(names[0]);
-    }
-
-    // 修复：模糊搜索显示所有 + 高亮匹配部分
-    function renderDetailTable(sheetName, kw = '') {
-      const data = allData[sheetName] || [];
-      const tbody = document.querySelector("#detailTable tbody");
-      const highlightedData = data.map(item => {
-        let highlightedSpec = item.spec;
-        if (kw) {
-          const regex = new RegExp(`(${kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
-          highlightedSpec = highlightedSpec.replace(regex, '<mark class="highlight">$1</mark>');
-        }
-        return { ...item, highlightedSpec };
-      });
-      document.getElementById("itemCount").textContent = data.length;  // 始终显示总数
-
-      tbody.innerHTML = highlightedData.map(item => `
-        <tr>
-          <td>${item.seq}</td>
-          <td>${item.type}</td>
-          <td>${item.highlightedSpec}</td>
-          <td>${item.material}</td>
-          <td class="stock">${item.stock.toLocaleString()}</td>
-          <td>${item.unit}</td>
-        </tr>
-      `).join('');
-    }
-
-    // Tab切换
-    document.querySelectorAll(".tab").forEach(tab => {
-      tab.onclick = () => {
-        document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
-        document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
-        tab.classList.add("active");
-        document.getElementById(tab.dataset.tab).classList.add("active");
+      select.innerHTML = names.map(n => `<option value="${n}">${n}（${allData[n].length}规格）</option>`).join('');
+      select.onchange = () => {
+        currentSheetData = allData[select.value] || [];
+        renderDetailTable(currentSheetData, document.getElementById("detailSearch").value);
       };
-    });
+      currentSheetData = allData[names[0]] || [];
+      renderDetailTable(currentSheetData, '');
+    }
 
-    // 搜索 - 排行榜
+    // 终极智能搜索：逐步精准过滤
+    function renderDetailTable(data, keyword = '') {
+      let filtered = data;
+
+      if (keyword.trim()) {
+        const kw = keyword.trim().toUpperCase();
+        // 逐步精准：越长越精准
+        filtered = data.filter(item => 
+          item.spec.toUpperCase().includes(kw)
+        );
+      }
+
+      document.getElementById("itemCount").textContent = filtered.length + (keyword ? `（已筛选）` : '');
+
+      const tbody = document.querySelector("#detailTable tbody");
+      tbody.innerHTML = filtered.map(item => {
+        let displaySpec = item.spec;
+        if (keyword) {
+          const regex = new RegExp(`(${keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+          displaySpec = displaySpec.replace(regex, '<mark class="highlight">$1</mark>');
+        }
+        return `
+          <tr class="${item.stock < 1000 && item.stock > 0 ? 'low-stock' : ''}">
+            <td>${item.seq}</td>
+            <td>${item.type}</td>
+            <td>${displaySpec}</td>
+            <td>${item.material || '-'}</td>
+            <td class="stock">${item.stock.toLocaleString()}</td>
+            <td>${item.unit}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    // 全局搜索
     document.getElementById("searchInput").oninput = e => {
       const kw = e.target.value.toLowerCase();
-      const all = [];
-      Object.values(allData).flat().forEach(arr => all.push(...arr));
-      const filtered = all.filter(i => 
-        i.spec.toLowerCase().includes(kw) || 
-        i.type.includes(kw) || 
+      if (!kw) return renderRanking();
+      const filtered = Object.values(allData).flat().filter(i =>
+        i.type.toLowerCase().includes(kw) ||
+        i.spec.toLowerCase().includes(kw) ||
         i.material.toLowerCase().includes(kw)
       );
       renderRanking(filtered);
     };
 
-    // 搜索 - 明细表（显示所有 + 高亮）
+    // 智能搜索输入框
     document.getElementById("detailSearch").oninput = e => {
       const kw = e.target.value;
-      const sheetName = document.getElementById("sheetSelect").value;
-      renderDetailTable(sheetName, kw);
+      renderDetailTable(currentSheetData, kw);
     };
 
-    // 导出功能
-    document.getElementById("exportBtn").onclick = () => {
-      const all = Object.values(allData).flat().filter(i => i.stock > 0);
-      const csv = all.map((item, idx) => `${idx+1},${item.type},${item.spec},${item.material},${item.stock},${item.unit}`).join('\n');
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
-      link.download = '库存排行榜.csv';
-      link.click();
-    };
+    // Tab切换
+    document.querySelectorAll(".tab").forEach(tab => {
+      tab.onclick = () => {
+        document.querySelectorAll(".tab,.panel").forEach(el => el.classList.remove("active"));
+        tab.classList.add("active");
+        document.getElementById(tab.dataset.tab).classList.add("active");
+      };
+    });
 
-    document.getElementById("detailExportBtn").onclick = () => {
-      const sheetName = document.getElementById("sheetSelect").value;
-      const data = allData[sheetName] || [];
-      const csv = data.map(item => `${item.seq},${item.type},${item.spec},${item.material},${item.stock},${item.unit}`).join('\n');
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
-      link.download = `${sheetName}.csv`;
-      link.click();
-    };
+    // 导出
+    document.getElementById("exportBtn").onclick = () => exportCSV(Object.values(allData).flat().filter(i=>i.stock>0).sort((a,b)=>b.stock-a.stock), "全厂库存排行榜.csv");
+    document.getElementById("detailExportBtn").onclick = () => exportCSV(allData[document.getElementById("sheetSelect").value] || [], `${document.getElementById("sheetSelect").value}.csv`);
+
+    function exportCSV(items, filename) {
+      const headers = "\uFEFF序号,型号,规格,材质,现库存,单位\n";
+      const rows = items.map(i => `${i.seq || ''},${i.type},${i.spec},${i.material || '-'},${i.stock},${i.unit}`);
+      const blob = new Blob([headers + rows.join("\n")], { type: "text/csv;charset=utf-8;" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      a.click();
+    }
 
     lucide.createIcons();
     loadExcel();
