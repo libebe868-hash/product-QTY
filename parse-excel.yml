@@ -1,0 +1,51 @@
+name: 自动解析 data.xlsx → JSON
+
+on:
+  push:
+    paths:
+      - 'data.xlsx'
+
+jobs:
+  parse-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout 仓库
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 安装依赖
+        run: pip install pandas openpyxl
+
+      - name: 解析 Excel → JSON
+        run: |
+          python -c "
+          import pandas as pd, json
+          xls = pd.ExcelFile('data.xlsx')
+          data = {}
+          for sheet in xls.sheet_names:
+              if sheet in ['总汇','Sheet1'] or '空白' in sheet: continue
+              df = pd.read_excel(xls, sheet_name=sheet, header=None, skiprows=4)
+              df = df.dropna(subset=[df.columns[2]])
+              df['stock'] = pd.to_numeric(df.iloc[:,6], errors='coerce').fillna(0).astype(int)
+              df['type'] = df.iloc[:,1].fillna(sheet)
+              df['spec'] = df.iloc[:,2].astype(str).str.strip()
+              df['material'] = df.iloc[:,3].astype(str).str.strip()
+              df['unit'] = df.iloc[:,5].fillna('pcs').astype(str)
+              df['seq'] = range(1, len(df)+1)
+              data[sheet] = df[['seq','type','spec','material','stock','unit']].to_dict('records')
+          with open('inventory-data.json', 'w', encoding='utf-8') as f:
+              json.dump(data, f, ensure_ascii=False, indent=2)
+          print('inventory-data.json 生成成功！')
+          "
+
+      - name: 提交 JSON 文件
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add inventory-data.json
+          git commit -m "Auto update inventory-data.json from data.xlsx" || echo "无变化"
+          git push
